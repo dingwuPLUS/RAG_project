@@ -5,7 +5,7 @@ from typing import List, Optional
 @dataclass
 class RAGConfig:
     # 文档路径
-    doc_dir: str = "./data/docs"
+    doc_dir: str = "./docs"
     # 分块策略："fixed", "recursive", "semantic"
     split_method: str = "recursive"
     chunk_size: int = 500
