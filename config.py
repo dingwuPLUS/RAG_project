@@ -12,6 +12,7 @@ class RAGConfig:
     chunk_overlap: int = 64
     # 嵌入模型（HuggingFace可用）
     dense_model_name: str = "BAAI/bge-small-zh-v1.5"  # 中文首选
+    rebuild: bool = True
     # FAISS索引路径
     index_path: str = "./storage/faiss_index"
     # 混合检索权重 (dense分数 * alpha + sparse分数 * (1-alpha))

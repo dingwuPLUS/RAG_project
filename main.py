@@ -19,6 +19,8 @@ from dialogue import HistoryManager, create_summary_function
 from augmentation import HyDEEnhancer, MultiQueryEnhancer, QueryRewriter
 from ui import run_cli, launch_web_ui
 
+logging.getLogger("httpx").setLevel(logging.WARNING)     # 隐藏 HTTP 请求日志
+logging.getLogger("sentence_transformers").setLevel(logging.WARNING)  # 隐藏模型加载细节
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
@@ -148,8 +150,8 @@ def main():
             retriever=retriever,
             reranker=reranker,
             history_manager=history_mgr,
-            use_hyde=False,      # 可在 cli 内部改为 True 体验
-            use_multi_query=False
+            use_hyde=True,      # 可在 cli 内部改为 True 体验
+            use_multi_query=True
         )
 
 
