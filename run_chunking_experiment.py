@@ -2,7 +2,7 @@ from chunking_experiment import *
 import glob
 
 # 1. 读取一个示例文档（用你 docs 里的任意 txt）
-sample_file = "docs/奥特曼排行榜.txt"  # 改成你的文件
+sample_file = "docs/奥特曼排行榜.md"  # 改成你的文件
 if not os.path.exists(sample_file):
     # 如果没有，创建一个示例文本
     sample_text = """奥特曼排行榜

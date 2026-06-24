@@ -8,8 +8,8 @@ class RAGConfig:
     doc_dir: str = "./docs"
     # 分块策略："fixed", "recursive", "semantic"
     split_method: str = "recursive"
-    chunk_size: int = 500
-    chunk_overlap: int = 50
+    chunk_size: int = 384
+    chunk_overlap: int = 64
     # 嵌入模型（HuggingFace可用）
     dense_model_name: str = "BAAI/bge-small-zh-v1.5"  # 中文首选
     # FAISS索引路径
