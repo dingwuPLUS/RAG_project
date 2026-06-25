@@ -4,21 +4,119 @@
 """
 
 import re
+import os
+import shutil
 import logging
 from typing import List, Callable, Optional
 import numpy as np
+from pathlib import Path
+
+from nltk.draw import cfg
 
 # 请根据你的项目结构调整 Document 导入路径
 from document_loader.loaders import Document
 
 logger = logging.getLogger(__name__)
 
+# ==================== Markdown 分块 ====================
+def markdown_split(
+    documents: List[Document],
+    chunk_size: int = 500,
+    chunk_overlap: int = 50,
+    save_dir: str = "./chunks"
+) -> List[Document]:
+    """
+    基于Markdown标题层级的分块器。
+    1. 按标题（#、##、###等）划分大段
+    2. 若某段长度超过chunk_size，再用递归字符分割细化
+    3. 保留标题作为块的起始，确保语义连贯
+    """
+    import re
+    chunks = []
+    for doc in documents:
+        text = doc.page_content
+        # 匹配所有标题行（#开头，后面有空格）
+        title_pattern = r'^(#{1,6})\s+(.+)$'
+        lines = text.split('\n')
+
+        # 构建标题索引：[(level, title_text, start_line, end_line)]
+        sections = []
+        current_start = 0
+        for i, line in enumerate(lines):
+            match = re.match(title_pattern, line)
+            if match:
+                # 保存上一段
+                if i > current_start:
+                    sections.append((None, None, current_start, i))
+                # 开始新段落
+                sections.append((len(match.group(1)), match.group(2).strip(), i, i+1))
+                current_start = i
+            # 非标题行，继续累积
+        if current_start < len(lines):
+            sections.append((None, None, current_start, len(lines)))
+
+        # 合并相邻的同一标题级别（同级别标题之间内容合并到一个块）
+        merged_sections = []
+        for level, title, start, end in sections:
+            if level is not None:  # 标题行
+                merged_sections.append({
+                    'level': level,
+                    'title': title,
+                    'start': start,
+                    'end': end,
+                    'content': ''
+                })
+            else:  # 内容块
+                if merged_sections:
+                    merged_sections[-1]['end'] = end
+                    merged_sections[-1]['content'] = '\n'.join(lines[start:end]).strip()
+                else:
+                    # 文档开头无标题
+                    merged_sections.append({
+                        'level': 0,
+                        'title': '',
+                        'start': start,
+                        'end': end,
+                        'content': '\n'.join(lines[start:end]).strip()
+                    })
+
+        # 按标题级别合并：低级别标题（如#）的内容包含其下的所有子标题
+        # 这里采用简单策略：直接按标题切分，每个标题及其下内容作为一个独立块
+        for sec in merged_sections:
+            if sec['title']:
+                full_text = f"# {sec['title']}\n{sec['content']}" if sec['level'] > 0 else sec['content']
+            else:
+                full_text = sec['content']
+
+            if not full_text.strip():
+                continue
+
+            # 如果内容超过chunk_size，用递归字符分割进一步切分
+            if len(full_text) > chunk_size:
+                sub_chunks = recursive_split(
+                    [Document(full_text, doc.metadata)],
+                    chunk_size=chunk_size,
+                    chunk_overlap=chunk_overlap,
+                    separators=["\n\n", "\n", "。"],
+                    save_dir=save_dir
+                )
+                for sc in sub_chunks:
+                    new_meta = {**doc.metadata, "chunk_id": len(chunks), "method": "markdown_title"}
+                    chunks.append(Document(sc.page_content, new_meta))
+            else:
+                new_meta = {**doc.metadata, "chunk_id": len(chunks), "method": "markdown_title"}
+                chunks.append(Document(full_text, new_meta))
+
+    logger.info(f"Markdown分块完成，共生成 {len(chunks)} 个块")
+    save_chunks_to_txt(chunks, os.path.join(save_dir, "markdown"), prefix="md")
+    return chunks
 
 # ==================== 固定大小分块 ====================
 def fixed_size_split(
     documents: List[Document],
     chunk_size: int = 500,
-    chunk_overlap: int = 50
+    chunk_overlap: int = 50,
+    save_dir:str = "./chunks"
 ) -> List[Document]:
     """
     固定大小滑动窗口分块。
@@ -48,6 +146,7 @@ def fixed_size_split(
                 if start >= len(text):
                     break
     logger.info(f"固定大小分块完成，共生成 {len(chunks)} 个块")
+    save_chunks_to_txt(chunks, os.path.join(save_dir, "fixed_size"), prefix="fixed")
     return chunks
 
 
@@ -56,7 +155,8 @@ def recursive_split(
     documents: List[Document],
     chunk_size: int = 500,
     chunk_overlap: int = 50,
-    separators: Optional[List[str]] = None
+    separators: Optional[List[str]] = None,
+    save_dir:str = "./chunks"
 ) -> List[Document]:
     """
     递归字符分割：按分隔符优先级逐级切分，保持语义完整性。
@@ -79,6 +179,7 @@ def recursive_split(
             new_meta = {**doc.metadata, "chunk_id": len(all_chunks)}
             all_chunks.append(Document(chunk_text, new_meta))
     logger.info(f"递归分块完成，共生成 {len(all_chunks)} 个块")
+    save_chunks_to_txt(all_chunks, os.path.join(save_dir, "recursive"), prefix="recursive")
     return all_chunks
 
 
@@ -154,6 +255,27 @@ def _merge_with_overlap(raw_chunks: List[str], chunk_size: int, overlap: int) ->
     # 若最后一个块太短，可以和前一个合并（但会破坏重叠，这里选择保留）
     return merged
 
+def clear_and_create_dir(output_dir: str):
+    """清空并重新创建输出目录"""
+    if os.path.exists(output_dir):
+        shutil.rmtree(output_dir)
+    os.makedirs(output_dir, exist_ok=True)
+
+
+def save_chunks_to_txt(chunks: List[Document], output_dir: str, prefix: str = "chunk"):
+    """
+    将分块结果保存为多个文本文件，文件名为 prefix_索引.txt
+    每个文件包含元信息和内容，便于查看。
+    """
+    Path(output_dir).mkdir(parents=True, exist_ok=True)
+    for idx, chunk in enumerate(chunks):
+        filepath = os.path.join(output_dir, f"{prefix}_{idx:04d}.txt")
+        with open(filepath, "w", encoding="utf-8") as f:
+            f.write(f"Metadata: {chunk.metadata}\n")
+            f.write("=" * 50 + "\n")
+            f.write(chunk.page_content)
+    print(f"✅ 已保存 {len(chunks)} 个块到目录：{output_dir}")
+
 
 # ==================== 语义分块 ====================
 class SemanticSplitter:
@@ -166,16 +288,19 @@ class SemanticSplitter:
         self,
         embed_fn: Callable[[List[str]], np.ndarray],
         similarity_threshold: float = 0.8,
-        min_sentences: int = 1
+        min_sentences: int = 1,
+        save_dir: str = "./chunks"
     ):
         self.embed_fn = embed_fn
         self.threshold = similarity_threshold
         self.min_sentences = min_sentences
+        self.save_dir = save_dir
 
         # 初始化 nltk 分句工具
         try:
             import nltk
             nltk.download('punkt', quiet=True)
+            nltk.download('punkt_tab', quiet=True)
             self.sent_tokenize = nltk.sent_tokenize
         except ImportError:
             raise ImportError("请安装 nltk: pip install nltk")
@@ -220,4 +345,5 @@ class SemanticSplitter:
                     }
                     chunks.append(Document(chunk_text.strip(), new_meta))
         logger.info(f"语义分块完成，共生成 {len(chunks)} 个块")
+        save_chunks_to_txt(chunks, os.path.join(self.save_dir, "semantic"), prefix="semantic")
         return chunks

@@ -72,20 +72,21 @@ def load_docx(file_path: str) -> List[Document]:
 
 
 def load_md(file_path: str) -> List[Document]:
-    """将 Markdown 转为纯文本（去除格式标记）"""
+    """直接读取原始Markdown内容，不做格式转换，保留所有标记"""
     try:
         with open(file_path, "r", encoding="utf-8") as f:
-            md_text = f.read()
-        html = markdown.markdown(md_text)
-        soup = BeautifulSoup(html, "lxml")
-        plain_text = soup.get_text(separator="\n")
-        if plain_text.strip():
+            text = f.read()
+        if text.strip():
             return [Document(
-                page_content=plain_text.strip(),
-                metadata={"source": file_path, "type": "markdown"}
+                page_content=text.strip(),  # 保留原始Markdown字符串
+                metadata={
+                    "source": file_path,
+                    "type": "markdown",      # 类型标记不变，分块时以此识别
+                    "original_format": "markdown"
+                }
             )]
     except Exception as e:
-        logger.error(f"解析 MD 失败: {file_path} - {e}")
+        logger.error(f"读取MD文件失败: {file_path} - {e}")
     return []
 
 

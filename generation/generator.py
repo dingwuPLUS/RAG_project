@@ -5,6 +5,8 @@
 
 import logging
 from typing import Optional, List, Dict, Any, Union, Generator
+
+import requests
 import torch
 from transformers import (
     AutoTokenizer,
@@ -20,7 +22,7 @@ logger = logging.getLogger(__name__)
 class LocalGenerator:
     def __init__(
         self,
-        model_name: str = "Qwen/Qwen2-1.5B-Instruct",
+        model_name: str = "Qwen/Qwen2.5-7B-Instruct",
         device: str = "cuda",
         load_in_4bit: bool = True,
         use_streamer: bool = False,
@@ -212,13 +214,13 @@ class LocalGenerator:
         # 最终拼接
         prompt = f"""{system}
 
-{history_str}
-参考信息：
-{context_str}
-
-当前问题：{query}
-请直接给出最终答案，不要继续生成对话：
-助手："""
+        {history_str}
+        参考信息：
+        {context_str}
+        
+        当前问题：{query}
+        请直接给出最终答案，不要继续生成对话：
+        助手："""
         return prompt
 
     def generate_with_rag(
@@ -231,3 +233,67 @@ class LocalGenerator:
     ) -> Union[str, Generator[str, None, None]]:
         prompt = self.format_rag_prompt(query, contexts, history, system)
         return self.generate(prompt, **kwargs)
+
+
+class APIGenerator:
+    def __init__(self, api_key: str, base_url: str = "https://api.openai.com/v1",
+                 model: str = "gpt-3.5-turbo"):
+        self.api_key = api_key
+        self.base_url = base_url
+        self.model = model
+        self.system_prompt = "你是一个专业的中文知识问答助手..."
+
+    def generate(self, prompt: str, max_tokens: int = 512, temperature: float = 0.7) -> str:
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json"
+        }
+        data = {
+            "model": self.model,
+            "messages": [
+                {"role": "system", "content": self.system_prompt},
+                {"role": "user", "content": prompt}
+            ],
+            "max_tokens": max_tokens,
+            "temperature": temperature
+        }
+        response = requests.post(f"{self.base_url}/chat/completions", headers=headers, json=data)
+        return response.json()["choices"][0]["message"]["content"].strip()
+
+
+class OllamaGenerator:
+    def __init__(self, base_url: str = "http://localhost:11434",
+                 model: str = "qwen2.5:7b",
+                 system_prompt: Optional[str] = None):
+        self.base_url = base_url.rstrip("/")
+        self.model = model
+        self.system_prompt = system_prompt or (
+            "你是一个专业的中文知识问答助手。请始终使用简体中文回答，"
+            "不要混用英文单词或短语。如果知识库内容中有英文，请将其翻译成中文后再回答。"
+            "请尽量简洁，避免重复。"
+        )
+
+    def generate(self, prompt: str,
+                 max_new_tokens: int = 512,
+                 temperature: float = 0.7,
+                 top_p: float = 0.9,
+                 **kwargs) -> str:
+        url = f"{self.base_url}/api/generate"
+        # 将 system prompt 和用户问题拼接成一个单轮 prompt
+        full_prompt = f"System: {self.system_prompt}\nUser: {prompt}\nAssistant:"
+        payload = {
+            "model": self.model,
+            "prompt": full_prompt,
+            "stream": False,
+            "options": {
+                "num_predict": max_new_tokens,
+                "temperature": temperature,
+                "top_p": top_p
+            }
+        }
+        if kwargs:
+            payload["options"].update(kwargs)
+
+        response = requests.post(url, json=payload)
+        response.raise_for_status()
+        return response.json()["response"].strip()

@@ -9,7 +9,8 @@ import argparse
 
 from config import RAGConfig
 from document_loader.loaders import load_documents
-from text_splitter import get_splitter
+from embedding import dense_embedder
+from text_splitter import get_splitter, clear_and_create_dir
 from embedding.dense_embedder import DenseEmbedder
 from embedding.sparse_embedder import BM25Searcher
 from vector_store.faiss_store import FAISSStore
@@ -70,6 +71,8 @@ def main():
     cfg = RAGConfig()
     cfg.doc_dir = args.doc_dir
 
+    clear_and_create_dir(cfg.chunk_split_path)
+
     # ---------- 2. 加载文档并分块 ----------
     logger.info("加载文档...")
     docs = load_documents(cfg.doc_dir)
@@ -79,18 +82,34 @@ def main():
 
     logger.info(f"共加载 {len(docs)} 个文档片段")
 
-    # 选择分块策略并分块
-    splitter = get_splitter(
-        cfg.split_method,
-        chunk_size=cfg.chunk_size,
-        chunk_overlap=cfg.chunk_overlap
-    )
-    chunks = splitter(docs)
-    logger.info(f"分块完成，共 {len(chunks)} 个块")
-
     # ---------- 3. 初始化嵌入模型 ----------
     logger.info("加载嵌入模型...")
     embedder = DenseEmbedder(cfg.dense_model_name, device=cfg.device)
+
+    # 根据文档类型选择分块策略
+    from collections import defaultdict
+    type_to_docs = defaultdict(list)
+    for doc in docs:
+        type_to_docs[doc.metadata.get("type", "unknown")].append(doc)
+
+    chunks = []
+    for doc_type, type_docs in type_to_docs.items():
+        if doc_type == "markdown":
+            # 使用Markdown专用分块
+            splitter = get_splitter("markdown",
+                                    chunk_size=cfg.chunk_size,
+                                    chunk_overlap=cfg.chunk_overlap)
+        else:
+            # 其他文档使用配置文件指定的方法（默认recursive）
+            splitter = get_splitter(cfg.split_method,
+                                    embed_fn=embedder.embed,
+                                    chunk_size=cfg.chunk_size,
+                                    chunk_overlap=cfg.chunk_overlap)
+        logger.info(f"对 {doc_type} 类型文档进行分块，共 {len(type_docs)} 个片段")
+        chunks_from_type = splitter(type_docs)
+        chunks.extend(chunks_from_type)
+
+    logger.info(f"分块完成，共 {len(chunks)} 个块")
 
     # ---------- 4. 构建向量存储 ----------
     logger.info("构建/加载向量索引...")
@@ -124,12 +143,22 @@ def main():
 
     # ---------- 6. 初始化生成器 ----------
     logger.info("加载语言模型...")
-    generator = LocalGenerator(
-        cfg.llm_model_name,
-        device=cfg.device,
-        load_in_4bit=True if cfg.device == "cuda" else False,
-        use_streamer=False  # CLI 下建议 False，Web 下可 True
-    )
+
+    if cfg.use_ollama:
+        from generation import OllamaGenerator
+        generator = OllamaGenerator(
+            base_url=cfg.ollama_base_url,
+            model=cfg.ollama_model
+        )
+    else:
+        # 保留原来的 LocalGenerator 逻辑
+        from generation import LocalGenerator
+        generator = LocalGenerator(
+            cfg.llm_model_name,
+            device=cfg.device,
+            load_in_4bit=True if cfg.device == "cuda" else False,
+            use_streamer=False
+        )
 
     # ---------- 7. 初始化对话管理 ----------
     summary_fn = create_summary_function(generator)

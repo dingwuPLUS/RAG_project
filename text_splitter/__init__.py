@@ -2,7 +2,7 @@
 分块器工厂接口，根据配置返回对应分块函数。
 """
 
-from .splitters import fixed_size_split, recursive_split, SemanticSplitter
+from .splitters import fixed_size_split, recursive_split, SemanticSplitter, save_chunks_to_txt, clear_and_create_dir, markdown_split
 
 
 def get_splitter(strategy: str, **kwargs):
@@ -15,6 +15,7 @@ def get_splitter(strategy: str, **kwargs):
     if strategy == "fixed":
         return lambda docs: fixed_size_split(
             docs,
+            save_dir="./chunks",
             chunk_size=kwargs.get("chunk_size", 500),
             chunk_overlap=kwargs.get("chunk_overlap", 50)
         )
@@ -23,7 +24,8 @@ def get_splitter(strategy: str, **kwargs):
             docs,
             chunk_size=kwargs.get("chunk_size", 500),
             chunk_overlap=kwargs.get("chunk_overlap", 50),
-            separators=kwargs.get("separators", None)
+            separators=kwargs.get("separators", None),
+            save_dir="./chunks"
         )
     elif strategy == "semantic":
         embed_fn = kwargs.get("embed_fn")
@@ -32,8 +34,16 @@ def get_splitter(strategy: str, **kwargs):
         splitter = SemanticSplitter(
             embed_fn=embed_fn,
             similarity_threshold=kwargs.get("similarity_threshold", 0.8),
-            min_sentences=kwargs.get("min_sentences", 1)
+            min_sentences=kwargs.get("min_sentences", 1),
+            save_dir="./chunks"
         )
         return splitter.split
+    elif strategy == "markdown":
+        return lambda docs: markdown_split(
+            docs,
+            chunk_size=kwargs.get("chunk_size", 500),
+            chunk_overlap=kwargs.get("chunk_overlap", 50),
+            save_dir="./chunks"
+        )
     else:
-        raise ValueError(f"未知分块策略: {strategy}，可选 'fixed', 'recursive', 'semantic'")
+        raise ValueError(f"未知分块策略: {strategy}，可选 'fixed', 'recursive', 'semantic', 'markdown'")
